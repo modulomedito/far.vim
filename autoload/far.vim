@@ -1475,6 +1475,19 @@ endfunction "}}}
 function! s:proc_pattern_args(far_params, cmdargs) abort "{{{
     let pattern = a:far_params.pattern
 
+    if a:far_params.source != 'vimgrep'
+        if pattern =~# '\%(\\\)\@<!\\C'
+            let pattern = substitute(pattern, '\%(\\\)\@<!\\C', '', 'g')
+            let a:far_params.case_sensitive = 1
+            let a:far_params.pattern = pattern
+        endif
+        if pattern =~# '\%(\\\)\@<!\\c'
+            let pattern = substitute(pattern, '\%(\\\)\@<!\\c', '', 'g')
+            let a:far_params.case_sensitive = 0
+            let a:far_params.pattern = pattern
+        endif
+    endif
+
     let multiline = match(pattern, '\n') != -1
     if multiline && ! (a:far_params.source == 'rg' || a:far_params.source == 'rgnvim' || a:far_params.source == 'vimgrep' )
         let source_subst = executable('rg') ? ( has('nvim') ? 'rgnvim' : 'rg') : 'vimgrep'
