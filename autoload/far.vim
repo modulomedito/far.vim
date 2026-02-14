@@ -112,7 +112,7 @@ endif
 
 if executable('rg')
     let cmd = ['rg', '-0', '--json', '--with-filename', '--no-heading',
-    \ '--vimgrep',  '--max-count={limit}', '{pattern}',  '{file_mask}']
+    \ '--vimgrep', '--no-ignore', '--max-count={limit}', '{pattern}',  '{file_mask}']
 
     call far#tools#setdefault('g:far#sources.rg', {})
     call far#tools#setdefault('g:far#sources.rg.fn', 'far.sources.shell.search')
