@@ -1505,9 +1505,13 @@ function! s:proc_pattern_args(far_params, cmdargs) abort "{{{
     let pattern = substitute(pattern, '\n', '\\n', 'g')
 
     if a:far_params.case_sensitive == 1
-        let pattern = '\C'. pattern
+        if a:far_params.source != 'rg' && a:far_params.source != 'rgnvim' && a:far_params.source != 'ag' && a:far_params.source != 'agnvim'
+            let pattern = '\C'. pattern
+        endif
     elseif a:far_params.case_sensitive == 0
-        let pattern = '\c'. pattern
+        if a:far_params.source != 'rg' && a:far_params.source != 'rgnvim' && a:far_params.source != 'ag' && a:far_params.source != 'agnvim'
+            let pattern = '\c'. pattern
+        endif
     endif
 
     if !a:far_params.regex && a:far_params.word_boundary
