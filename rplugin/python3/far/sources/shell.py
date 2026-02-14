@@ -94,6 +94,10 @@ class MultiProc:
 
         return line
 
+    def terminate(self):
+        if self.proc:
+            self.proc.terminate()
+
 
 def search(ctx, args, cmdargs):
     logger.debug('search(%s, %s, %s)', str(ctx), str(args), str(cmdargs))
