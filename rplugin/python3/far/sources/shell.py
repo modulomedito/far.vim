@@ -158,12 +158,17 @@ def search(ctx, args, cmdargs):
             return {'error': 'No files matching the glob expression'}
     elif glob_mode == 'rg':
         # Use ripgrep to glob
-        logger.debug(
-            f'Globbing with ripgrep: rg --files {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}')
-        files = os.popen(
-            f'rg --files {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}').read().split('\n')
-        if len(files) and files[-1] == '':
-            files.pop()
+        rg_glob_cmd = f'rg --files --no-ignore {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}'
+        logger.debug(f'Globbing with ripgrep: {rg_glob_cmd}')
+        try:
+            output = subprocess.check_output(rg_glob_cmd, shell=True, cwd=root)
+            files = output.decode(preferred_encoding).splitlines()
+        except subprocess.CalledProcessError as e:
+            logger.debug(f'rg globbing failed: {e}')
+            files = []
+        except Exception as e:
+            return {'error': f'Globbing error: {str(e)}'}
+
         if len(files) == 0:
             return {'error': 'No files matching the glob expression'}
     elif glob_mode == 'native':
