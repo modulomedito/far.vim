@@ -119,17 +119,24 @@ def search(ctx, args, cmdargs):
     source = ctx['source']
     pattern = ctx['pattern']
 
-    # Strip \C from pattern if present (workaround for autoload caching)
-    if source in ('rg', 'rgnvim') and r'\C' in pattern:
-        pattern = pattern.replace(r'\C', '')
-        if '--case-sensitive' not in cmdargs:
-            cmdargs.append('--case-sensitive')
+    # Strip \C and \c from pattern if present (workaround for autoload caching)
+    # Only strip if not escaped (preceded by odd number of backslashes implies \C, e.g. \C, \\\C)
+    if source in ('rg', 'rgnvim'):
+        def replace_vim_flags(m):
+            slashes = m.group(1)
+            char = m.group(2)
+            if len(slashes) % 2 == 1:
+                # Odd slashes: ...\C -> Flag (remove last backslash and C)
+                if char == 'C':
+                    if '--case-sensitive' not in cmdargs:
+                        cmdargs.append('--case-sensitive')
+                elif char == 'c':
+                    if '--ignore-case' not in cmdargs:
+                        cmdargs.append('--ignore-case')
+                return slashes[:-1]
+            return m.group(0)
 
-    # Strip \c from pattern if present
-    if source in ('rg', 'rgnvim') and r'\c' in pattern:
-        pattern = pattern.replace(r'\c', '')
-        if '--ignore-case' not in cmdargs:
-            cmdargs.append('--ignore-case')
+        pattern = re.sub(r'(\\*)([Cc])', replace_vim_flags, pattern)
 
     regex = ctx['regex']
     case_sensitive = ctx['case_sensitive']
