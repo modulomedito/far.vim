@@ -122,21 +122,48 @@ def search(ctx, args, cmdargs):
     # Strip \C and \c from pattern if present (workaround for autoload caching)
     # Only strip if not escaped (preceded by odd number of backslashes implies \C, e.g. \C, \\\C)
     if source in ('rg', 'rgnvim'):
-        def replace_vim_flags(m):
-            slashes = m.group(1)
-            char = m.group(2)
-            if len(slashes) % 2 == 1:
-                # Odd slashes: ...\C -> Flag (remove last backslash and C)
-                if char == 'C':
-                    if '--case-sensitive' not in cmdargs:
-                        cmdargs.append('--case-sensitive')
-                elif char == 'c':
-                    if '--ignore-case' not in cmdargs:
-                        cmdargs.append('--ignore-case')
-                return slashes[:-1]
-            return m.group(0)
+        # Manual parsing to handle \C and \c flags
+        new_pattern = []
+        i = 0
+        n = len(pattern)
+        while i < n:
+            if pattern[i] == '\\':
+                # Count consecutive backslashes
+                start = i
+                i += 1
+                while i < n and pattern[i] == '\\':
+                    i += 1
+                backslashes = i - start
 
-        pattern = re.sub(r'(\\*)([Cc])', replace_vim_flags, pattern)
+                # Check next char
+                if i < n and pattern[i] in ('C', 'c'):
+                    char = pattern[i]
+                    if backslashes % 2 == 1:
+                        # Odd backslashes + C/c -> Flag
+                        # Append (backslashes - 1) backslashes
+                        new_pattern.append('\\' * (backslashes - 1))
+                        if char == 'C':
+                            if '--case-sensitive' not in cmdargs:
+                                cmdargs.append('--case-sensitive')
+                        elif char == 'c':
+                            if '--ignore-case' not in cmdargs:
+                                cmdargs.append('--ignore-case')
+                        i += 1  # Skip C/c
+                        continue
+                    else:
+                        # Even backslashes + C/c -> Literal
+                        new_pattern.append('\\' * backslashes)
+                        new_pattern.append(char)
+                        i += 1
+                        continue
+                else:
+                    # Just backslashes followed by something else
+                    new_pattern.append('\\' * backslashes)
+                    continue
+            else:
+                new_pattern.append(pattern[i])
+                i += 1
+        pattern = ''.join(new_pattern)
 
     regex = ctx['regex']
     case_sensitive = ctx['case_sensitive']

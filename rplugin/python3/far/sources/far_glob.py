@@ -138,8 +138,8 @@ def rg_ignore_globs(files, as_str=True):
             for ignore_file in files
             if os.path.exists(ignore_file)
         ]
-        for ignore_glob in sublist
-        if len(ignore_glob.strip()) > 0 and ("#" not in ignore_glob)
+        for ignore_glob in [line.strip() for line in sublist]
+        if len(ignore_glob) > 0 and not ignore_glob.startswith('#')
     }
     if as_str:
         return ' '.join(map(lambda dir: f"-g \"!{dir}\"", ignored))
