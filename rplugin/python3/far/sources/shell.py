@@ -17,6 +17,7 @@ import os
 import tempfile
 import pathlib
 import json
+import io
 from json import JSONDecodeError
 
 logger = logging.getLogger('far')
@@ -31,10 +32,21 @@ class MultiProc:
         self.proc = None
         self.returncode = None
         self.ARG_MAX = 30000
+        self.all_stderr = b''
 
         self._next_proc()
 
     def _next_proc(self):
+        if self.proc:
+            try:
+                err = self.proc.stderr.read()
+                if err:
+                    self.all_stderr += err
+            except Exception as e:
+                logger.debug('MultiProc read stderr error: ' + str(e))
+
+            self.proc.wait()
+
         if self.file_idx >= len(self.files):
             self.proc = None
             self.returncode = 0
@@ -78,9 +90,7 @@ class MultiProc:
 
     @property
     def stderr(self):
-        if self.proc:
-            return self.proc.stderr
-        return self
+        return io.BytesIO(self.all_stderr)
 
     def readline(self):
         if not self.proc:
@@ -88,7 +98,6 @@ class MultiProc:
 
         line = self.proc.stdout.readline()
         if not line:
-            self.proc.wait()
             self._next_proc()
             return self.readline()
 
