@@ -9,7 +9,7 @@ from pprint import pprint
 from locale import getpreferredencoding
 from sys import platform
 
-from .far_glob import load_ignore_rules,far_glob,GlobError,IgnoreFileError,rg_rules_glob,rg_ignore_globs
+from .far_glob import load_ignore_rules, far_glob, GlobError, IgnoreFileError, rg_rules_glob, rg_ignore_globs
 import logging
 import subprocess
 import re
@@ -20,6 +20,80 @@ import json
 from json import JSONDecodeError
 
 logger = logging.getLogger('far')
+
+
+class MultiProc:
+    def __init__(self, cmd, files, cwd):
+        self.cmd = cmd
+        self.files = files
+        self.cwd = cwd
+        self.file_idx = 0
+        self.proc = None
+        self.returncode = None
+        self.ARG_MAX = 30000
+
+        self._next_proc()
+
+    def _next_proc(self):
+        if self.file_idx >= len(self.files):
+            self.proc = None
+            self.returncode = 0
+            return
+
+        current_cmd = list(self.cmd)
+        cmd_len = sum(len(arg) + 1 for arg in current_cmd)
+
+        chunk = []
+        while self.file_idx < len(self.files):
+            f = self.files[self.file_idx]
+            arg_len = len(f) + 3
+            if cmd_len + arg_len > self.ARG_MAX:
+                if not chunk:
+                    chunk.append(f)
+                    self.file_idx += 1
+                break
+
+            chunk.append(f)
+            cmd_len += arg_len
+            self.file_idx += 1
+
+        current_cmd.extend(chunk)
+        logger.debug('MultiProc cmd: %s', str(current_cmd))
+
+        self.proc = subprocess.Popen(current_cmd, cwd=self.cwd,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    def poll(self):
+        if self.proc:
+            if self.proc.poll() is None:
+                return None
+
+        if self.file_idx >= len(self.files) and self.proc is None:
+            return self.returncode
+        return None
+
+    @property
+    def stdout(self):
+        return self
+
+    @property
+    def stderr(self):
+        if self.proc:
+            return self.proc.stderr
+        return self
+
+    def readline(self):
+        if not self.proc:
+            return b''
+
+        line = self.proc.stdout.readline()
+        if not line:
+            self.proc.wait()
+            self._next_proc()
+            return self.readline()
+
+        return line
+
 
 def search(ctx, args, cmdargs):
     logger.debug('search(%s, %s, %s)', str(ctx), str(args), str(cmdargs))
@@ -59,7 +133,8 @@ def search(ctx, args, cmdargs):
                     load_ignore_rules(ignore_file)
                 )
             except IgnoreFileError as e:
-                final_result['warning'] += ' | Invalid ignore-rule files. '+str(e)
+                final_result['warning'] += ' | Invalid ignore-rule files. ' + \
+                    str(e)
 
         try:
             files = far_glob(root, rules, ignore_rules)
@@ -70,8 +145,10 @@ def search(ctx, args, cmdargs):
             return {'error': 'No files matching the glob expression'}
     elif glob_mode == 'rg':
         # Use ripgrep to glob
-        logger.debug(f'Globbing with ripgrep: rg --files {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}')
-        files = os.popen(f'rg --files {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}').read().split('\n')
+        logger.debug(
+            f'Globbing with ripgrep: rg --files {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}')
+        files = os.popen(
+            f'rg --files {rg_rules_glob(rules)} {rg_ignore_globs(ignore_files)}').read().split('\n')
         if len(files) and files[-1] == '':
             files.pop()
         if len(files) == 0:
@@ -81,19 +158,22 @@ def search(ctx, args, cmdargs):
         # For rg, the file mask is converted into -g option glob rules.  For everything else,
         # the mask is passed directly as an agument (and typically treated as a directory).
         if source in ('rg', 'rgnvim'):
-            native_glob_args = rg_rules_glob(rules, False) + rg_ignore_globs(ignore_files, False)
+            native_glob_args = rg_rules_glob(
+                rules, False) + rg_ignore_globs(ignore_files, False)
     else:
         return {'error': 'Invalid glob_mode'}
 
     # Build search command
     cmd = []
-    if glob_mode != 'native':
+    use_xargs = glob_mode != 'native' and not is_win32
+    if use_xargs:
         # Run each for each globbed file
         cmd.append('xargs')
         cmd.append('-0')
     for c in args['cmd']:
-         if c != '{file_mask}' or (glob_mode == 'native' and file_mask and not native_glob_args):
-            cmd.append(c.format(limit=limit, pattern=pattern, file_mask=file_mask))
+        if c != '{file_mask}' or (glob_mode == 'native' and file_mask and not native_glob_args):
+            cmd.append(
+                c.format(limit=limit, pattern=pattern, file_mask=file_mask))
     if args.get('expand_cmdargs', '0') != '0':
         cmd += cmdargs
     if native_glob_args:
@@ -102,35 +182,33 @@ def search(ctx, args, cmdargs):
     logger.debug('cmd:' + str(cmd))
 
     # Determine how to handle stdin for the command
-    if glob_mode != 'native':
+    if use_xargs:
         proc_stdin = subprocess.PIPE
     else:
         proc_stdin = subprocess.DEVNULL
 
     # Execute search command
     try:
-        proc = subprocess.Popen(cmd, cwd=ctx['cwd'], stdin=proc_stdin,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if glob_mode != 'native' and is_win32:
+            proc = MultiProc(cmd, files, ctx['cwd'])
+        else:
+            proc = subprocess.Popen(cmd, cwd=ctx['cwd'], stdin=proc_stdin,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception as e:
         return {'error': str(e)}
 
-    # If non-native glob, pipe the file list to stdin for xargs to handle
-    if glob_mode != 'native':
+    # If xargs, pipe the file list to stdin
+    if use_xargs:
         sep = '\0'
-        if is_win32:
-            proc.stdin.write((sep.join(files).replace("\\", "/") + sep).encode(preferred_encoding))
-        else:
-            proc.stdin.write((sep.join(files) + sep).encode(preferred_encoding))
+        proc.stdin.write((sep.join(files) + sep).encode(preferred_encoding))
         proc.stdin.close()
 
     logger.debug('type(proc) = ' + str(type(proc)))
 
-
     range_ = tuple(ctx['range'])
     result = {}
 
-
-    if source == 'rg' or source == 'rgnvim' :
+    if source == 'rg' or source == 'rgnvim':
 
         while limit > 0:
             line = proc.stdout.readline()
@@ -138,7 +216,8 @@ def search(ctx, args, cmdargs):
             try:
                 line = line.decode('utf-8').rstrip()
             except UnicodeDecodeError:
-                logger.debug("UnicodeDecodeError: line = line.decode('utf-8').rstrip() failed, line:")
+                logger.debug(
+                    "UnicodeDecodeError: line = line.decode('utf-8').rstrip() failed, line:")
                 continue
 
             if not line:
@@ -162,7 +241,8 @@ def search(ctx, args, cmdargs):
                 continue
 
             if type(item) != dict or 'type' not in item:
-                logger.debug('json error: item is not dict or item has no key "type". item =' + str(item))
+                logger.debug(
+                    'json error: item is not dict or item has no key "type". item =' + str(item))
                 continue
 
             if item['type'] == 'match':
@@ -175,7 +255,8 @@ def search(ctx, args, cmdargs):
                 except KeyError:
                     text = data['lines']['bytes']
                 except:
-                    logger.debug("item['data']['lines'] has neigher key 'test' nor key 'bytes'. item =" + str(item))
+                    logger.debug(
+                        "item['data']['lines'] has neigher key 'test' nor key 'bytes'. item =" + str(item))
                     continue
                 if len(text) > max_columns:
                     logger.debug(
@@ -184,7 +265,6 @@ def search(ctx, args, cmdargs):
                     continue
                 text = text.split('\n')[0]
                 text = text.rstrip()
-
 
                 for submatch in data['submatches']:
                     match = submatch['match']['text']
@@ -197,7 +277,6 @@ def search(ctx, args, cmdargs):
                             continue
                         else:
                             one_file_result.append(item_idx)
-
 
                     if (range_[0] != -1 and range_[0] > lnum) or \
                        (range_[1] != -1 and range_[1] < lnum):
@@ -214,7 +293,7 @@ def search(ctx, args, cmdargs):
                         'cnum': cnum,
                         'text': text,
                         'match': match
-                        }
+                    }
                     result[file_name]['items'].append(item_ctx)
 
                     limit -= 1
@@ -228,7 +307,7 @@ def search(ctx, args, cmdargs):
                     else:
                         cpat = re.compile(pattern)
                 except Exception as e:
-                    return {'error': 'invalid pattern: ' + str(e) }
+                    return {'error': 'invalid pattern: ' + str(e)}
 
         while limit > 0:
             line = proc.stdout.readline()
@@ -236,7 +315,8 @@ def search(ctx, args, cmdargs):
             try:
                 line = line.decode('utf-8').rstrip()
             except UnicodeDecodeError:
-                logger.debug("UnicodeDecodeError: line = line.decode('utf-8').rstrip() failed, line:")
+                logger.debug(
+                    "UnicodeDecodeError: line = line.decode('utf-8').rstrip() failed, line:")
                 continue
 
             if not line:
@@ -251,7 +331,6 @@ def search(ctx, args, cmdargs):
                     logger.debug('end of proc. break')
                     break
                 continue
-
 
             items = re.split(':', line, 3)
             if len(items) != 4:
@@ -288,7 +367,6 @@ def search(ctx, args, cmdargs):
                 result[file_name] = file_ctx
             file_ctx = result[file_name]
 
-
             item_ctx = {}
             item_ctx['text'] = text
             item_ctx['lnum'] = lnum
@@ -296,10 +374,10 @@ def search(ctx, args, cmdargs):
             file_ctx['items'].append(item_ctx)
             limit -= 1
 
-
             if submatch_type == 'first':
                 byte_num = item_ctx['cnum']
-                char_num = len( text.encode('utf-8')[:byte_num-1].decode('utf-8') )
+                char_num = len(text.encode('utf-8')
+                               [:byte_num-1].decode('utf-8'))
                 move_cnum = char_num + 1
 
                 if regex == '0':
@@ -336,7 +414,6 @@ def search(ctx, args, cmdargs):
         proc.terminate()
     except Exception as e:
         logger.error('failed to terminate proc: ' + str(e))
-
 
     with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as fp:
         for file_ctx in result.values():
