@@ -118,6 +118,13 @@ def search(ctx, args, cmdargs):
 
     source = ctx['source']
     pattern = ctx['pattern']
+
+    # Strip \C from pattern if present (workaround for autoload caching)
+    if pattern.endswith(r'\C') and source in ('rg', 'rgnvim'):
+        pattern = pattern[:-2]
+        if '--case-sensitive' not in cmdargs:
+            cmdargs.append('--case-sensitive')
+
     regex = ctx['regex']
     case_sensitive = ctx['case_sensitive']
 
@@ -198,6 +205,8 @@ def search(ctx, args, cmdargs):
         cmd += native_glob_args
 
     logger.debug('cmd:' + str(cmd))
+    logger.debug('pattern:' + str(pattern))
+    logger.debug('cmdargs:' + str(cmdargs))
 
     # Determine how to handle stdin for the command
     if use_xargs:
