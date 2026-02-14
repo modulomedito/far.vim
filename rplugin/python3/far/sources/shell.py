@@ -120,10 +120,16 @@ def search(ctx, args, cmdargs):
     pattern = ctx['pattern']
 
     # Strip \C from pattern if present (workaround for autoload caching)
-    if pattern.endswith(r'\C') and source in ('rg', 'rgnvim'):
-        pattern = pattern[:-2]
+    if source in ('rg', 'rgnvim') and r'\C' in pattern:
+        pattern = pattern.replace(r'\C', '')
         if '--case-sensitive' not in cmdargs:
             cmdargs.append('--case-sensitive')
+
+    # Strip \c from pattern if present
+    if source in ('rg', 'rgnvim') and r'\c' in pattern:
+        pattern = pattern.replace(r'\c', '')
+        if '--ignore-case' not in cmdargs:
+            cmdargs.append('--ignore-case')
 
     regex = ctx['regex']
     case_sensitive = ctx['case_sensitive']
