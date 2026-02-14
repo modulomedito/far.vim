@@ -119,10 +119,8 @@ def search(ctx, args, cmdargs):
     source = ctx['source']
     pattern = ctx['pattern']
 
-    # Strip \C and \c from pattern if present (workaround for autoload caching)
-    # Only strip if not escaped (preceded by odd number of backslashes implies \C, e.g. \C, \\\C)
+    # Manual parsing to handle \C and \c flags
     if source in ('rg', 'rgnvim'):
-        # Manual parsing to handle \C and \c flags
         new_pattern = []
         i = 0
         n = len(pattern)
@@ -167,6 +165,25 @@ def search(ctx, args, cmdargs):
 
     regex = ctx['regex']
     case_sensitive = ctx['case_sensitive']
+
+    # Ensure case_sensitive context is respected for rg
+    if source in ('rg', 'rgnvim'):
+        if case_sensitive == 1:
+            if '--case-sensitive' not in cmdargs:
+                cmdargs.append('--case-sensitive')
+            # Remove conflicting flags if present
+            if '--ignore-case' in cmdargs:
+                cmdargs.remove('--ignore-case')
+            if '--smart-case' in cmdargs:
+                cmdargs.remove('--smart-case')
+        elif case_sensitive == 0:
+            if '--ignore-case' not in cmdargs:
+                cmdargs.append('--ignore-case')
+            # Remove conflicting flags if present
+            if '--case-sensitive' in cmdargs:
+                cmdargs.remove('--case-sensitive')
+            if '--smart-case' in cmdargs:
+                cmdargs.remove('--smart-case')
 
     file_mask = ctx['file_mask']
     submatch_type = args.get('submatch')
